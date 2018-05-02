@@ -4,6 +4,7 @@ from skimage.io import imread
 # from skimage.draw import circle, circle_perimeter
 from itertools import product
 from model import Cell
+from PIL import Image, ImageDraw
 
 def load_img(target_file, as_grey=False, keep_alpha=False):
     img = imread(target_file, as_grey=as_grey)
@@ -18,8 +19,8 @@ def write_img(img, outfile=None, fig_size=(3,3)):
     fig_size = size when making image
     """
     fig, ax = plt.subplots(ncols=1, nrows=1, figsize=fig_size)
-    ax.imshow(1-img, cmap='Greys', vmin=0, vmax=1) # invert colors
-    # ax.imshow(img_cell, vmin=0, vmax=255)
+    # ax.imshow(1-img, cmap='Greys', vmin=0, vmax=1) # invert colors
+    ax.imshow(img, vmin=0, vmax=255)
     ax.axis('off')
     if outfile is not None:
         fig.savefig(outfile)
@@ -49,6 +50,53 @@ def render_square(seq, img):
         raise Exception("Empty square. Radius must be too small.")
     img[rr, cc] = color
     return img
+
+def pure_pil_alpha_to_color_v2(image, color=(255, 255, 255)):
+    """Alpha composite an RGBA Image with a specified color.
+    src: http://stackoverflow.com/a/9459208/284318
+
+    Keyword Arguments:
+    image -- PIL RGBA Image object
+    color -- Tuple r, g, b (default 255, 255, 255)
+    """
+    image.load()  # needed for split()
+    background = Image.new('RGB', image.size, color)
+    background.paste(image, mask=image.split()[3])  # 3 is the alpha channel
+    return background
+
+class TriangleCell(Cell):
+    def __init__(self, img_target, ngenes, genes=None):
+        self.img_target = img_target
+        self.img_size = img_target.shape
+        self.lbs, self.ubs = self.set_bounds()
+        self.nparams = len(self.lbs)
+        Cell.__init__(self, ngenes, genes)
+
+    def set_bounds(self):
+        lbs = np.zeros(10)
+        ubs = np.array([self.img_size[0], self.img_size[1], self.img_size[0], self.img_size[1], self.img_size[0], self.img_size[1], 255., 255., 255., 255.])
+        return lbs, ubs
+
+    def render_triangle(self, seq):
+        x1,y1,x2,y2,x3,y3,R,G,B,A = seq
+
+        img = Image.new('RGBA', self.img_size[:2]) # Use RGBA
+        draw = ImageDraw.Draw(img)
+        draw.polygon([(x1, y1), (x2, y2), (x3, y3)], fill=(int(R),int(G),int(B),int(A)))
+        return img
+
+    def render(self):
+        imgs = []
+        seqs = np.reshape(self.genes, (-1, len(self.lbs)))
+        Img = Image.new('RGBA', self.img_size[:2])
+        for seq in seqs:
+            cseq = self.lbs + seq*(self.ubs - self.lbs)
+            img = self.render_triangle(cseq)
+            Img = Image.alpha_composite(Img, img)
+        return pure_pil_alpha_to_color_v2(Img)
+
+    def evaluate(self):
+        self.fitness = fitness(self.render(), self.img_target)
 
 class SquareCell(Cell):
     def __init__(self, img_target, ngenes, genes=None):
@@ -85,6 +133,8 @@ class SquareCellFixedPosAndRadius(SquareCell):
         seq only contains radius and color
         so assume that each gene refers to squares in a grid spanning the img
         """
+        self.genes[self.genes < self.lbs] = self.lbs
+        self.genes[self.genes > self.ubs] = self.ubs
         return (self.lbs + self.genes*(self.ubs - self.lbs)).reshape(self.img_size)
 
 class SquareCellFixedPos(SquareCell):

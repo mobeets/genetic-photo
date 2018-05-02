@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 from skimage.io import imread
 from model import Population
-from img import load_img, write_img, cell_maker_fcn, SquareCellFixedPos, SquareCellFixedPosAndRadius, SquareCellFixedRad
+from img import load_img, write_img, cell_maker_fcn, SquareCellFixedPos, SquareCellFixedPosAndRadius, SquareCellFixedRad, TriangleCell
 from methods import update_population_NM, update_population_DE
 
 def get_update_fcn(args):
@@ -18,7 +18,7 @@ def train(P, updatefcn, args):
     best_cell = max(P.cells, key=lambda cell: cell.fitness)
     for i in range(args.num_epochs):
         # make new generation
-        P = updatefcn(P, args)
+        P, is_done = updatefcn(P, args)
 
         # log population fitness info
         if i % args.log_every == 0:
@@ -31,15 +31,13 @@ def train(P, updatefcn, args):
             outfile = os.path.join(args.outdir, args.run_name, '{}.png'.format(i))
             write_img(best_cell.render(), outfile)
 
+        if is_done:
+            break
+
     best_cell = max(P.cells, key=lambda cell: cell.fitness)
     return best_cell
 
 def main(args):
-    """
-    first, replace SquareCellFixedPosAndRadius with something that just reshapes the "genes" into an image, and THERE: that's the rendering step!
-
-    next, look into python rendering of images, since 50 triangles IN COLOR actually has fewer params than searching through 20x20 pixel space (it just takes longer to render)
-    """
     # load target img and write (for reference)
     img_target = load_img(args.target_file, as_grey=args.as_grey, keep_alpha=False)
     outfile = os.path.join(args.outdir, args.run_name, '_input.png')
@@ -50,11 +48,14 @@ def main(args):
         os.mkdir(os.path.join(args.outdir, args.run_name))
 
     # create population
-    cellfcn = cell_maker_fcn(SquareCellFixedPosAndRadius, args, img_target)
+    cellfcn = cell_maker_fcn(TriangleCell, args, img_target)
+    # cellfcn = cell_maker_fcn(SquareCellFixedPosAndRadius, args, img_target)
     # cellfcn = cell_maker_fcn(SquareCellFixedPos, args, img_target)
     # cellfcn = cell_maker_fcn(SquareCellFixedRad, args, img_target)
     updatefcn = get_update_fcn(args)
+    print("Initialized. Creating population...")
     P = Population(args, cellfcn)
+    print("Training...")
     return train(P, updatefcn, args)
 
 if __name__ == '__main__':
@@ -62,24 +63,24 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('run_name', type=str, help='tag for current run')
     parser.add_argument('--num_epochs', type=int, default=20000)
-    parser.add_argument('--num_cells', type=int, default=10000) # 50
-    parser.add_argument('--num_genes', type=int, default=400)
+    parser.add_argument('--num_cells', type=int, default=5000) # 50
+    parser.add_argument('--num_genes', type=int, default=500)
 
     # Nelder-Mead:
     parser.add_argument("--use_nm", action="store_true",
         help="use Nelder-Mead algorithm")
-    parser.add_argument('--nm_alpha', type=float, default=1.0)
+    parser.add_argument('--nm_alpha', type=float, default=0.9)
     parser.add_argument('--nm_gamma', type=float, default=2.0)
-    parser.add_argument('--nm_rho', type=float, default=0.5)
+    parser.add_argument('--nm_rho', type=float, default=0.7)
     parser.add_argument('--nm_sigma', type=float, default=0.5)
 
     # Differential Evolution:
     parser.add_argument("--use_de", action="store_true",
         help="Use Differential Evolution")
-    parser.add_argument('--de_crossover_rate', type=float, default=0.1)
-    parser.add_argument('--de_F', type=float, default=0.1)
+    parser.add_argument('--de_crossover_rate', type=float, default=0.5)
+    parser.add_argument('--de_F', type=float, default=0.8)
 
-    parser.add_argument('--target_file', type=str, default='images/heart.png')
+    parser.add_argument('--target_file', type=str, default='images/trump.png')
     parser.add_argument("--as_grey", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--log_every", type=int, default=10)
