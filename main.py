@@ -1,7 +1,6 @@
 import os.path
 import argparse
 import numpy as np
-from skimage.io import imread
 from model import Population
 from img import load_img, write_img, cell_maker_fcn, SquareCellFixedPos, SquareCellFixedPosAndRadius, SquareCellFixedRad, TriangleCell
 from methods import update_population_NM, update_population_DE

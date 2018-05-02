@@ -1,3 +1,4 @@
+import os.path
 import numpy as np
 from keras import backend as K
 from keras.models import Model
@@ -6,6 +7,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
+# from img import load_img, write_img
+from PIL import Image
 
 def get_model(batch_size, original_dim, intermediate_dims, optimizer):
     x = Input(batch_shape=(batch_size, original_dim), name='x')
@@ -110,68 +113,104 @@ def update_population(X, y, K, mdl, num_epochs, batch_size, nsteps, stepsize, to
 def init_population(N, K):
     return 2*(np.random.rand(N, K) - 0.5)
 
-def update_history(X, y, x_max, y_max, do_print=True, init=False):
+def update_history(X, y, x_max, y_max, do_print=True, do_plot=False, init=False, mdl=None, batch_size=None, outfile=None, ind=None, render_fcn=None):
+
     if y.max() > y_max:
         y_max_ind = np.argmax(y)
         x_max = X[y_max_ind]
         y_max = y[y_max_ind]
-    name = 'True' if init else 'Best estimate of'
-    x_max_str = '(' + ', '.join(['{:0.3f}'.format(x) for x in x_max]) + ')'
     if do_print:
+        name = 'True' if init else 'Best estimate of'
+        x_max_str = '(' + ', '.join(['{:0.3f}'.format(x) for x in x_max]) + ')'
         print(("{} maximum is at {}: {:0.3f}").format(name, x_max_str, y_max))
+    if do_plot:
+        # compare predicted with actual fitness
+        yh = mdl.predict(X, batch_size=batch_size)
+        if ind is None:
+            outf = outfile.format('compare_e')
+        else:
+            outf = outfile.format('compare_e' + str(ind))
+        plot_y_vs_yh(y, yh, outf)
+
+        # render image and save
+        img = render_fcn(x_max)
+        if ind is None:
+            outf = outfile.format('img_e')
+        else:
+            outf = outfile.format('img_e' + str(ind))
+        img.save(outf)
     return x_max, y_max
 
-def _eval_fcn(X, K):
-    beta = [1, 5, 3, -2, 4]
-    offset = [0, 1, 0, -1, 3]
-    beta2 = [7, 0, 3, -1, 0]
-    offset2 = [0, 0, 1, -1, 0]
-    y = np.prod(np.cos(beta[:K]*X + offset[:K]), axis=1)
-    y += np.sin(beta2[:K]*X + offset2[:K]).sum(axis=1)
-    y = y*multivariate_normal.pdf(X, mean=np.zeros(K))
-    y = y - y.min() + 0.1 # keep y above 0
-    return y
+def img_fitness(img_predicted, img_target):
+    res = 1.0*np.square(img_predicted - img_target).sum()
+    # tot = np.prod(img_target.shape).sum() # maximum possible
+    tot = 1.0*np.square(img_target).sum() # maximum possible
+    return 1.0 - res/tot
 
-def make_eval_fcn(K):
-    assert(K <= 5)
-    return lambda X: _eval_fcn(X, K=K)
+def render_img(x, img_size, imgs):
+    img = Image.new('RGB', img_size)
+    pts = (x+1)/2. # pts in [0,1]
+    order = np.argsort(pts[-4:]) # last 4 dims defines ordering
+    pts = pts[:-4]
+    pts = pts.reshape(-1, 2)
+    for (x,y), pimg in zip(pts[order], [imgs[i] for i in order]):
+        cx = int(x*img.size[0])
+        cy = int(y*img.size[1])
+        img.paste(pimg, (cx,cy)) # cx,cy are the upper left corner
+    return img
 
-def fit(K=2, num_gens=50, batch_size=100, dims=[16, 32], plot_every=5, num_epochs=100, nsteps=1, stepsize=1e-1, outfile='logs/nn/{}.png', optimizer='adam'):
-    eval_fcn = make_eval_fcn(K)
+def _eval_fcn(X, img_target, imgs):
+    ys = np.zeros(X.shape[0])
+    for i, x in enumerate(X):
+        img = render_img(x, img_target.shape[:2], imgs)
+        ys[i] = img_fitness(np.array(img), img_target) # should be in [0,1]
+        # todo: consider squashing so it's actually in [0.2, 0.8]
+        #   since with sigmoid activation we likely can't fit the bounds as well
+    return ys
 
-    # show true function
-    X0 = get_test_data(N=np.power(batch_size*batch_size, 1./K), K=K, batch_size=batch_size)
-    y = eval_fcn(X0)
-    update_history(X0, y, 0., -np.inf, init=True)
-    plot_3d_scatter(X0, y, outfile.format('_true'), do_mesh=K==2)
+def load_img(infile, as_grey=False, keep_alpha=False):
+    fin = open(infile) # open the file
+    img = Image.open(fin)
+    assert(not as_grey)
+    assert(not keep_alpha)
+    return img
+
+def make_eval_and_render_fcn(targetdir):
+    # load target image
+    infile = os.path.join(targetdir, 'target.png')
+    target = load_img(infile, as_grey=False, keep_alpha=False)
+
+    # load puzzle pieces
+    nms = ['NW', 'NE', 'SW', 'SE']
+    imgfiles = [os.path.join(targetdir, '{}.png'.format(nm)) for nm in nms]
+    imgs = [load_img(imgfile, as_grey=False, keep_alpha=False) for imgfile in imgfiles]
+
+    target_img = np.array(target)[:,:,:3]
+    evalf = lambda X: _eval_fcn(X, target_img, imgs)
+    renderf = lambda X: render_img(X, target_img.shape[:2], imgs)
+    return evalf, renderf
+
+def fit(K=12, num_gens=100, batch_size=100, dims=[16, 32], plot_every=5,
+    num_epochs=100, nsteps=1, stepsize=1e-1,
+    targetdir='images/trump_puzzle', outfile='logs/nn_puzzle/{}.png',
+    optimizer='adam'):
+    eval_fcn, render_fcn = make_eval_and_render_fcn(targetdir)
 
     # init population
     mdl = get_model(batch_size, K, dims, optimizer)
-    # X = init_population(N=batch_size, K=K)
-    # init to grid that doesn't contain true x_max
-    X = 0.5*np.random.rand(batch_size, K) + 0.4
+    X = init_population(N=batch_size, K=K)
     y = eval_fcn(X)
-    x_max, y_max = update_history(X, y, 0., -np.inf)
+    x_max, y_max = update_history(X, y, 0., -np.inf, do_plot=True, mdl=mdl, batch_size=batch_size, outfile=outfile, ind=0, render_fcn=render_fcn)
 
     # evolve
     print("Updating fitness model given {} cells...".format(len(y)))
     for i in range(num_gens):
         X = update_population(X, y, K, mdl, num_epochs, batch_size, nsteps, stepsize)
         y = eval_fcn(X)
-        x_max, y_max = update_history(X, y, x_max, y_max, do_print=i % plot_every == 0)
-        if i % plot_every == 0:
-            yh = mdl.predict(X, batch_size=batch_size)
-            yh_all = mdl.predict(X0, batch_size=batch_size)
-            plot_3d_scatter(X, yh, outfile.format('prediction_cur_e' + str(i)))
-            plot_3d_scatter(X0, yh_all, outfile.format('prediction_tot_e' + str(i)), do_mesh=K==2)
-            plot_y_vs_yh(y, yh, outfile.format('compare_e' + str(i)))
+        x_max, y_max = update_history(X, y, x_max, y_max, do_print=True, do_plot=i % plot_every == 0, mdl=mdl, batch_size=batch_size, outfile=outfile, ind=i, render_fcn=render_fcn)
 
-    # show fits
-    yh = mdl.predict(X, batch_size=batch_size)
-    yh_all = mdl.predict(X0, batch_size=batch_size)
-    plot_3d_scatter(X, yh, outfile.format('_prediction_cur'))
-    plot_3d_scatter(X0, yh_all, outfile.format('_prediction_tot'), do_mesh=K==2)
-    plot_y_vs_yh(y, yh, outfile.format('_compare'))
+    # show final results
+    x_max, y_max = update_history(X, y, x_max, y_max, do_print=True, do_plot=True, mdl=mdl, batch_size=batch_size, outfile=outfile, ind=None, render_fcn=render_fcn)
 
 if __name__ == '__main__':
     fit()

@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 
 def load_img(target_file, as_grey=False, keep_alpha=False):
     img = imread(target_file, as_grey=as_grey)
-    if not keep_alpha and len(img.shape) > 3:
+    if not keep_alpha and len(img.shape) > 2:
         # ignore alpha channel, if present
         img = img[:,:,:3]
     return img
