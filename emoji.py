@@ -50,7 +50,10 @@ def fitness0(img_predicted, img_target):
     tot = 1.0*np.square(img_target).sum() # maximum possible
     return 1.0 - res/tot
 
-def make_fitness_fcn(model, img_target, layer_name='block5_conv1'):
+def make_fitness_fcn(img_target, layer_name='block5_conv1'):
+	fitness = lambda yh, y: -np.sqrt(np.square(1.0*y - 1.0*yh).sum())
+	return fitness, lambda x: []
+
 	model = load_model()
 	prep_img = lambda img: preprocess_input(np.expand_dims(img, axis=0))
 	layer_dict = dict([(layer.name, layer) for layer in model.layers])
@@ -68,10 +71,10 @@ def make_fitness_fcn(model, img_target, layer_name='block5_conv1'):
 	# fitness = lambda imgh, img, cx, cy, px, py: -np.square(imgfcn(imgh[cx:cx+px,cy:cy+py]) - imgfcn(img[cx:cx+px,cy:cy+py])).sum()
 	return fitness, imgfcn
 
-def main(niters=2400, infile='images/trump.png', outfile='images/out.png', force_add=True, use_pixel_loss=True, use_grid=False, width=8):
-	emojis = load_emojis(width=8)#[:20]
+def main(niters=2000, infile='images/elaine.png', outfile='images/out.png', force_add=True, use_pixel_loss=True, use_grid=True, width=8):
+	emojis = load_emojis(width=width)#[:20]
 	Y = load_target(infile)
-	Image.fromarray(Y).save(outfile.replace('.', '_target.'))
+	# Image.fromarray(Y).save(outfile.replace('.', '_target.'))
 
 	fitness, imgfcn = make_fitness_fcn(Y, layer_name='block5_conv1')
 	print('Loaded {} emojis.'.format(len(emojis)))
@@ -97,7 +100,10 @@ def main(niters=2400, infile='images/trump.png', outfile='images/out.png', force
 		px, py = np.meshgrid(xs, ys)
 		pos = np.vstack([px.flatten(), py.flatten()]).T
 	else:
-		pos = (np.random.rand(niters, 2)*Y.shape[:2]).astype(int)
+		rng = np.random.RandomState(666)
+		pos = (rng.rand(niters, 2)*Y.shape[:2]).astype(int)
+		# pos = (np.random.rand(niters, 2)*Y.shape[:2]).astype(int)
+	pos += np.random.randn(*pos.shape).astype(int)
 
 	print('Trying {} positions.'.format(len(pos)))
 	for i in range(len(pos)):
@@ -146,15 +152,18 @@ def main(niters=2400, infile='images/trump.png', outfile='images/out.png', force
 			# Yh.paste(emojis[j], (cx,cy))#, emojis[i])
 			Yh.paste(emojis[j], (cx,cy), emojis[j])
 			# Yh.rotate(90).transpose(Image.FLIP_LEFT_RIGHT).save(outfile)
-			ImageOps.flip(Yh.rotate(90)).save(outfile)
 			# Yh.rotate(90).transpose(Image.FLIP_LEFT_RIGHT).save(outfile)
 			if i % 20 == 0:
 				print(i, j, null_score)
 		else:
 			if i % 20 == 0:
 				print(i, np.nan, null_score)
+		if i % 20 == 0:
+			ImageOps.flip(Yh.rotate(90)).save(outfile)
 
 if __name__ == '__main__':
-	main(outfile='logs/outs/trmp2.png')
-	# for j in range(100):
-	# 	main(outfile='logs/outs/{}.png'.format(j))
+	# main(outfile='logs/outs/trmp2.png')
+	for j in range(16):
+		main(infile='images/trump/trump-{}.png'.format(j),
+			outfile='logs/trump/trump-{}.png'.format(j))
+	# convert -delay 10 *.png out.gif
