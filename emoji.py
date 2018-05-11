@@ -24,7 +24,7 @@ def pure_pil_alpha_to_color_v2(image, color=(255, 255, 255)):
     background.paste(image, mask=image.split()[3])  # 3 is the alpha channel
     return background
 
-def load_emojis(infile='images/emojis.png', width=8):
+def load_emojis(infile='images/emojis.png', upsample=1.0):
 	img = imread(infile, mode='RGBA')
 	# img = np.array(pure_pil_alpha_to_color_v2(Image.fromarray(img)))
 	# img = np.array(Image.open(infile).convert('RGB'))
@@ -35,14 +35,15 @@ def load_emojis(infile='images/emojis.png', width=8):
 	# for i in range(C.shape[0]):
 	# 	img = Image.fromarray(C[i,:,:,:])
 	# 	img.save('images/emojis/{}.png'.format(i))
-	return [Image.fromarray(c).resize((width,width)) for c in C]
+	return [Image.fromarray(c).resize((int(upsample*c.shape[0]), int(upsample*c.shape[1]))) for c in C]
 
-def load_target(infile='images/trump.png'):
+def load_target(infile='images/trump.png', upsample=1.0):
 	# img = imread(infile, mode='RGBA')
 	# img = np.array(pure_pil_alpha_to_color_v2(Image.fromarray(img)))
-	img = np.array(Image.open(infile).convert('RGB'))
+	img = Image.open(infile).convert('RGB')
 	# img = np.array(Image.fromarray(img).convert('RGB'))
-	return img
+	img = img.resize((upsample*img.size[0], upsample*img.size[1]))
+	return np.swapaxes(np.array(img), 0, 1)
 	
 def fitness0(img_predicted, img_target):
     res = 1.0*np.square(img_predicted - img_target).sum()
@@ -71,16 +72,16 @@ def make_fitness_fcn(img_target, layer_name='block5_conv1'):
 	# fitness = lambda imgh, img, cx, cy, px, py: -np.square(imgfcn(imgh[cx:cx+px,cy:cy+py]) - imgfcn(img[cx:cx+px,cy:cy+py])).sum()
 	return fitness, imgfcn
 
-def main(niters=2000, infile='images/elaine.png', outfile='images/out.png', force_add=True, use_pixel_loss=True, use_grid=True, width=8):
-	emojis = load_emojis(width=width)#[:20]
-	Y = load_target(infile)
-	# Image.fromarray(Y).save(outfile.replace('.', '_target.'))
+def main(niters=2000, infile='images/elaine.png', outfile='images/out.png', force_add=True, use_pixel_loss=True, use_grid=True, unit_upsample=1, target_upsample=6, log_every=50, grid_stride=1.5):
+	emojis = load_emojis(upsample=unit_upsample)#[:70]
+	Y = load_target(infile, upsample=target_upsample)
+	# Image.fromarray(np.swapaxes(Y, 0, 1)).save(outfile.replace('.', '_target.'))
 
 	fitness, imgfcn = make_fitness_fcn(Y, layer_name='block5_conv1')
 	print('Loaded {} emojis.'.format(len(emojis)))
 	print('Target image is {}.'.format(Y.shape))
 
-	Yh = Image.new('RGBA', Y.shape[:2])
+	Yh = Image.new('RGBA', (Y.shape[:2]))
 	# Yh = Image.new('RGB', Y.shape[:2])
 	last_score = 0.0
 
@@ -95,20 +96,24 @@ def main(niters=2000, infile='images/elaine.png', outfile='images/out.png', forc
 			resps.append(imgfcn(np.array(em)))
 
 	if use_grid:
-		xs = np.arange(0, Y.shape[0], emojis[0].size[0])
-		ys = np.arange(0, Y.shape[1], emojis[0].size[1])
+		xs = np.arange(0, Y.shape[0], emojis[0].size[0]/grid_stride)
+		ys = np.arange(0, Y.shape[1], emojis[0].size[1]/grid_stride)
 		px, py = np.meshgrid(xs, ys)
 		pos = np.vstack([px.flatten(), py.flatten()]).T
 	else:
 		rng = np.random.RandomState(666)
 		pos = (rng.rand(niters, 2)*Y.shape[:2]).astype(int)
-		# pos = (np.random.rand(niters, 2)*Y.shape[:2]).astype(int)
+	# randomly re-order, and add jitter
+	inds = np.random.permutation(pos.shape[0])
+	pos = pos[inds]
 	pos += np.random.randn(*pos.shape).astype(int)
 
 	print('Trying {} positions.'.format(len(pos)))
 	for i in range(len(pos)):
 		# pick random location
 		cx,cy = pos[i,:]
+		cx = int(cx)
+		cy = int(cy)
 		# try each target
 		scores = np.zeros(len(emojis))
 		# print('Iteration {}'.format(i))
@@ -153,17 +158,20 @@ def main(niters=2000, infile='images/elaine.png', outfile='images/out.png', forc
 			Yh.paste(emojis[j], (cx,cy), emojis[j])
 			# Yh.rotate(90).transpose(Image.FLIP_LEFT_RIGHT).save(outfile)
 			# Yh.rotate(90).transpose(Image.FLIP_LEFT_RIGHT).save(outfile)
-			if i % 20 == 0:
+			if i % log_every == 0:
 				print(i, j, null_score)
 		else:
-			if i % 20 == 0:
+			if i % log_every == 0:
 				print(i, np.nan, null_score)
-		if i % 20 == 0:
-			ImageOps.flip(Yh.rotate(90)).save(outfile)
+		if i % log_every == 0:
+			# ImageOps.flip(Yh.rotate(90)).save(outfile)
+			Yh.save(outfile)
+	# ImageOps.flip(Yh.rotate(90)).save(outfile)
+	Yh.save(outfile)
 
 if __name__ == '__main__':
 	# main(outfile='logs/outs/trmp2.png')
 	for j in range(16):
 		main(infile='images/trump/trump-{}.png'.format(j),
-			outfile='logs/trump/trump-{}.png'.format(j))
-	# convert -delay 10 *.png out.gif
+			outfile='logs/trump5/trump-{}.png'.format(j))
+	# convert -dispose previous -delay 1 *.png out.gif
